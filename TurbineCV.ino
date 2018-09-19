@@ -12,9 +12,9 @@
 
 //MIDI CC messages used for the different outputs 0-2 (pitch bend is #3)
 uint8_t cc_list[4] = {
-  2,  //Breath
-  4,  //Foot pedal
-  5,  //Porta time
+  2,        //Breath
+  4,        //Foot pedal
+  5,        //Porta time
   UNUSED_CC //Unused
 };
 
@@ -30,8 +30,7 @@ uint8_t cs_pins[2] = {5, 7};
 
 //High-resolution CC messages. Typically "regular CC" + 32. Can be manually set here.
 //If set to HIRES_CC_AUTO, these are automatically assigned to CC+32 where appropriate.
-//If hi-res is unwanted (such as if something else is using that), set this to
-//UNUSED_CC to block it off
+//If hi-res is unwanted, set this to UNUSED_CC to block it off
 uint8_t cc_hires[4] = {
   HIRES_CC_AUTO,
   HIRES_CC_AUTO,
@@ -39,9 +38,7 @@ uint8_t cc_hires[4] = {
   UNUSED_CC
 };
 
-//Flags to set high=1 (0-4V) or low=0 gain (0-2V) per DAC. Which one is best depends on
-//the output stage and the application. On high gain the output may be usable "as is",
-//but with an op amp low-gain might be more useful.
+//Flags to set high=1 (0-4V) or low=0 gain (0-2V) per DAC.
 uint8_t dac_gain[4] = {0, 0, 0, 0};
 
 
