@@ -60,7 +60,7 @@ uint8_t cv_invert[6] = {0, 0, 0, 0, 0, 0};
 
 
 //Map two 7-bit parts into one 12-bit value
-#define map14to12(msb, lsb)  (((msb << 5) | (lsb >> 2)) & 0X0FFF)
+#define map14to12(msb, lsb)  ((((uint16_t)msb << 5) | (lsb >> 2)) & 0X0FFF)
 
 
 bool trigger_on = false;
@@ -157,7 +157,7 @@ void loop() {
 //Callback for CC messages
 void midiChangeControl(byte channel, byte number, byte value) {
 
-#ifdef DEBUG_PRINT
+#ifdef DEBUG_PRINT_CC
   Serial.print("Chan: ");
   Serial.print(channel);
   Serial.print(" cc: ");
@@ -184,7 +184,7 @@ void midiChangeControl(byte channel, byte number, byte value) {
           //values over the entire DAC range
           cc_lsb[i] = cc_msb[i] = value;
 
-#ifdef DEBUG_PRINT
+#ifdef DEBUG_PRINT_CC
           Serial.print("Sending slot ");
           Serial.print(i);
           Serial.println(" (low-res)");
@@ -200,7 +200,8 @@ void midiChangeControl(byte channel, byte number, byte value) {
       //Read LSB ("high-res" part), and send it right away.
       cc_lsb[i] = value;
       hires_seen[i] = true;
-#ifdef DEBUG_PRINT
+
+#ifdef DEBUG_PRINT_CC
       Serial.print("Sending slot ");
       Serial.print(i);
       Serial.println(" (high-res)");
@@ -245,8 +246,9 @@ void midiNoteOn(byte channel, byte note, byte velocity) {
   //Just ignore notes outside of range (these could be "folded back in")
   if(note < MIDI_NOTE_LOW || note > MIDI_NOTE_HIGH) return;
 
-  int8_t current_note = note_on(note);
-  
+  //current_note = note_on(note);
+  current_note = note;
+  note_velocity = velocity;
 
   play_note(true);
 
@@ -268,19 +270,14 @@ void midiNoteOff(byte channel, byte note, byte velocity) {
 
   if(note < MIDI_NOTE_LOW || note > MIDI_NOTE_HIGH) return;
 
-  current_note = note_off(note);
+  //Leave last note playing, just mute it
+  //current_note = note_off(note);
+  //current_note = NO_NOTE;
 
-  if(current_note == NO_NOTE) {
-    //Turn off gate
-    digitalWrite(GATE_PIN, LOW);
+  note_velocity = 0;
+  digitalWrite(GATE_PIN, LOW);
+  sendVelocity(note_velocity);
 
-    note_velocity = 0; //Why would velocity sent via MIDI be anything other than 0?
-
-    sendVelocity(note_velocity);
-
-  } else {
-    play_note(true); //Play next note after something is released. We have no idea about velocity here, just keep whatever was there.
-  }
 }
 
 void play_note(bool new_note) {
@@ -289,25 +286,33 @@ void play_note(bool new_note) {
   uint16_t note_dac_value = cvtable[current_note-MIDI_NOTE_LOW];
 
   if(pitch_bend != 0) {
+    int pb_amount;
     if(pitch_bend > 0) { //pitch bend up
 
       //Find the highest value we can pitch up to. Note that this will "compress" the pitch bend range if you are close to the end
       //of the range.
-      uint16_t upper_note_dac = cvtable[min(current_note + PITCH_BEND_RANGE, MIDI_NOTE_HIGH)-MIDI_NOTE_LOW+];
+      uint16_t upper_note_dac = cvtable[min(current_note + PITCH_BEND_RANGE, MIDI_NOTE_HIGH)-MIDI_NOTE_LOW];
 
       //Interpolate position of pitch bend
-      uint16_t pb_amount = (upper_note_dac - note_dac_value) * pitch_bend / 8191;
+      pb_amount = (long)pitch_bend * (upper_note_dac - note_dac_value) / 8192;
 
-      note_dac_value += pb_amount;
+
     } else { //pitch bend down
-      uint16_t lower_note_dac = cvtable[max(current_note - PITCH_BEND_RANGE, MIDI_NOTE_LOW)-MIDI_NOTE_LOW+];
+      uint16_t lower_note_dac = cvtable[max(current_note - PITCH_BEND_RANGE, MIDI_NOTE_LOW)-MIDI_NOTE_LOW];
 
       //Interpolate position of pitch bend
-      uint16_t pb_amount = (note_dac_value - lower_note_dac) * pitch_bend / 8192;
-
-      note_dac_value -= pb_amount;
+      pb_amount = (long)pitch_bend * (note_dac_value-lower_note_dac) / 8192;
     }
+
+    note_dac_value += pb_amount;
   }
+
+  #ifdef DEBUG_PRINT
+  Serial.print("PLAYING NOTE ");
+  Serial.print(current_note);
+  Serial.print(" dac ");
+  Serial.println(note_dac_value);
+  #endif
 
   sendDac(PITCH_SLOT, note_dac_value);
 
@@ -351,6 +356,7 @@ void sendDac(uint8_t slot, uint16_t value) {
   command |= value;
 
 #ifdef DEBUG_PRINT
+  if(slot>3) {
   Serial.print("Send ");
   Serial.print(value);
   Serial.print(" cs ");
@@ -359,6 +365,7 @@ void sendDac(uint8_t slot, uint16_t value) {
   Serial.print(dac);
   Serial.print(" command ");
   Serial.println(command, HEX);
+}
 #endif
 
   SPI.beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
