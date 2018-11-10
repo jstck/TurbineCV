@@ -113,6 +113,10 @@ int8_t note_off(int8_t note) {
 			p_dec(buffer_head);
 		}
 	}
+	//Still playing the same note
+	else {
+		return note_buffer[buffer_head];
+	}
 }
 
 //Get current note playing (negative if none)
