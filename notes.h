@@ -3,7 +3,7 @@
 
 
 //Size of buffer of notes. This needs to be a power of 2, less than 256
-#define NOTE_BUFFER_SIZE 32
+#define NOTE_BUFFER_SIZE 8
 
 //Value representing no note
 #define NO_NOTE -1

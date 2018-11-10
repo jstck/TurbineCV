@@ -285,12 +285,12 @@ void midiPitchBend(byte channel, int bend) {
 void midiNoteOn(byte channel, byte note, byte velocity) {
 
   #ifdef DEBUG_PRINT
-  Serial.print("Chan: ");
-  Serial.print(channel);
-  Serial.print(" note on: ");
-  Serial.print(note);
-  Serial.print(" vel: ");
-  Serial.println(velocity);
+  //Serial.print("Chan: ");
+  //Serial.print(channel);
+  Serial.print("Note on: ");
+  Serial.println(note);
+  //Serial.print(" vel: ");
+  //Serial.println(velocity);
   #endif
 
   if(MIDI_CHANNEL && channel != MIDI_CHANNEL) return;
@@ -298,8 +298,8 @@ void midiNoteOn(byte channel, byte note, byte velocity) {
   //Just ignore notes outside of range (these could be "folded back in")
   if(note < MIDI_NOTE_LOW || note > MIDI_NOTE_HIGH) return;
 
-  //current_note = note_on(note);
-  current_note = note;
+  current_note = note_on(note);
+  
   note_velocity = velocity;
 
   play_note(true);
@@ -310,37 +310,37 @@ void midiNoteOn(byte channel, byte note, byte velocity) {
 void midiNoteOff(byte channel, byte note, byte velocity) {
 
   #ifdef DEBUG_PRINT
-  Serial.print("Chan: ");
-  Serial.print(channel);
-  Serial.print(" note off: ");
-  Serial.print(note);
-  Serial.print(" vel: ");
-  Serial.println(velocity);
+  //Serial.print("Chan: ");
+  //Serial.print(channel);
+  Serial.print("Note off: ");
+  Serial.println(note);
+  //Serial.print(" vel: ");
+  //Serial.println(velocity);
   #endif
 
   if(MIDI_CHANNEL && channel != MIDI_CHANNEL) return;
 
   if(note < MIDI_NOTE_LOW || note > MIDI_NOTE_HIGH) return;
 
-  //Leave last note playing, just mute it
-  //current_note = note_off(note);
-  //current_note = NO_NOTE;
-  if(note != current_note) return;
+  int8_t new_note = note_off(note);
 
-  note_velocity = 0;
-  digitalWrite(GATE_PIN, LOW);
-  sendVelocity(note_velocity);
+  //Don't do anything if note didn't change
+  if(new_note == current_note) {
+    return;
+  }
 
+  //If no note is playing, just turn off gate
+  if(new_note == NO_NOTE) {
+    digitalWrite(GATE_PIN, LOW);  
+  } else {
+    current_note = new_note;
+    play_note(true);
+  }
+
+  
 }
 
 void midiAftertouchChannel(byte channel, byte pressure) {
-
-  #ifdef DEBUG_PRINT
-  Serial.print("Chan: ");
-  Serial.print(channel);
-  Serial.print(" aftertouch: ");
-  Serial.println(pressure);
-  #endif
   
   //Bail out if not set to use aftertouch (via switch)
   if(!use_aftertouch) {
@@ -349,6 +349,13 @@ void midiAftertouchChannel(byte channel, byte pressure) {
 
   if(MIDI_CHANNEL && channel != MIDI_CHANNEL) return;
 
+  #ifdef DEBUG_PRINT
+  Serial.print("Chan: ");
+  Serial.print(channel);
+  Serial.print(" aftertouch: ");
+  Serial.println(pressure);
+  #endif
+
   //Aftertouch is only low-resolution.
   cc_msb[AT_SLOT] = pressure;
   cc_lsb[AT_SLOT] = 0;
@@ -356,6 +363,11 @@ void midiAftertouchChannel(byte channel, byte pressure) {
 }
 
 void play_note(bool new_note) {
+
+  //Exit on "invalid notes" that can't be played anyway
+  if(current_note < MIDI_NOTE_LOW || current_note > MIDI_NOTE_HIGH) {
+    return;
+  }
 
   //Send note V/oct
   uint16_t note_dac_value = cvtable[current_note-MIDI_NOTE_LOW];
@@ -430,8 +442,7 @@ void sendDac(uint8_t slot, uint16_t value) {
   if(!dac_gain[slot]) command |= 0x2000;  //Set "low gain" bit
   command |= value;
 
-#ifdef DEBUG_PRINT
-  if(slot>3) {
+#ifdef KEIN_DEBUG_PRINT
   Serial.print("Send ");
   Serial.print(value);
   Serial.print(" cs ");
@@ -440,7 +451,6 @@ void sendDac(uint8_t slot, uint16_t value) {
   Serial.print(dac);
   Serial.print(" command ");
   Serial.println(command, HEX);
-}
 #endif
 
   SPI.beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
