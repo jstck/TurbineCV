@@ -12,7 +12,7 @@
 
 //Uncomment this to get debug output on serial console. May add some latency to MIDI output. Only do this on
 //arduinos where serial console does not use the same hardware serial port as MIDI
-#define DEBUG_PRINT
+//#define DEBUG_PRINT
 
 #define UNUSED_CC 255
 #define HIRES_CC_AUTO 254
@@ -30,12 +30,14 @@ uint8_t cc_list[N_DAC] = {
   UNUSED_CC   //Velocity
 };
 
-//"DAC slots" where note pitch (v/oct) and velocity are sent. DAC 0 is slots 0 and 1, DAC 1 is 2 and 3, DAC 2 is 4 and 5.
+//"DAC slots" where various specially treated things are. DAC 0 is slots 0 and 1, DAC 1 is 2 and 3, DAC 2 is 4 and 5.
 #define NOTE_SLOT 0
+#define GLIDE_SLOT 1
 #define BEND_SLOT 2
+#define AT_SLOT 3 //Aftertouch goes in breath slot
 #define VELOCITY_SLOT 5
 
-#define AT_SLOT 3 //Aftertouch goes in breath slot
+
 
 //High-resolution CC messages. Typically "regular CC" + 32. Can be manually set here.
 //If set to HIRES_CC_AUTO, these are automatically assigned to CC+32 (where main CC is in 1-31 range).
@@ -96,6 +98,15 @@ bool glide_merge;
 bool bend_merge;
 bool use_aftertouch;
 unsigned long switchesRead;
+unsigned long lastActivity;
+bool ledActive = false;
+
+//Portamento/glide settings and state
+bool in_portamento = false;
+int porta_dac_start;
+int porta_dac_end;
+unsigned long porta_start_time;
+unsigned long porta_end_time;
 
 
 //Do midi with default settings.
@@ -171,6 +182,9 @@ void setup() {
   MIDI.setHandleNoteOff(midiNoteOff);
   MIDI.setHandleAfterTouchChannel(midiAftertouchChannel);
 
+  //Signal midi activity led to indicate things are ready
+  midiActivity();
+
 #ifdef DEBUG_PRINT
   Serial.println("TurbineCV ready");
 #endif
@@ -190,9 +204,17 @@ void loop() {
     }
   }
 
-  if(millis() >= switchesRead + SWITCH_READ_INTERVAL) {
+  unsigned long now = millis();
+
+  if(now >= switchesRead + SWITCH_READ_INTERVAL) {
     readSwitches();
   }
+
+  if(ledActive && now >= lastActivity + MIDI_ACT_TIME) {
+    digitalWrite(LED_PIN, LOW);
+    ledActive = false;
+  }
+
 }
 
 //Callback for CC messages
@@ -209,13 +231,19 @@ void midiChangeControl(byte channel, byte number, byte value) {
 
   if(MIDI_CHANNEL && channel != MIDI_CHANNEL) return; //Only care about specific channel
 
+  midiActivity();
+
+  bool isGlide = false;
+
   for(uint8_t i=0; i<N_DAC; ++i) {
     if(number==cc_list[i]) {
 
-      //Ignore this value if aftertouch is used for this slot
-      if(use_aftertouch && i==AT_SLOT) {
-        return;
-      }
+      //Ignore this value if it is a value to be overridden by aftertouch
+      if(use_aftertouch && i == AT_SLOT) return;
+
+      //Mark that this is a glide/portamento update. However, only actually update in a situation where CC would be sent
+      //to deal with high-res properly
+      if(glide_merge && i == GLIDE_SLOT) isGlide = true; //THIS IS PORTAAAA!
 
       //Read MSB ("low-res" part)
       if(value != cc_msb[i]) {
@@ -238,12 +266,13 @@ void midiChangeControl(byte channel, byte number, byte value) {
 #endif
 
           sendCC(i);  //Send data now, as this is likely all we are getting
+          updateGlideRate();
         }
       }
       // return; //allow for same CC to be used on multiple outputs for whatever reason
     }
 
-    if(number==cc_list[i]+32) {
+    if(number==cc_hires[i]) {
       //Read LSB ("high-res" part), and send it right away.
       cc_lsb[i] = value;
       hires_seen[i] = true;
@@ -254,7 +283,7 @@ void midiChangeControl(byte channel, byte number, byte value) {
       Serial.println(" (high-res)");
 #endif
       sendCC(i);
-      // return;
+      updateGlideRate();
     }
 
   }
@@ -272,6 +301,8 @@ void midiPitchBend(byte channel, int bend) {
 #endif
 
   if(MIDI_CHANNEL && channel != MIDI_CHANNEL) return; //Only care about specific channel
+
+  midiActivity();
 
   int pb_dac = (bend+8192) / 4; //Scale pb value from -8192 - 8191 down to "dac range", 0-4095
   sendDac(BEND_SLOT, pb_dac);
@@ -294,6 +325,8 @@ void midiNoteOn(byte channel, byte note, byte velocity) {
   #endif
 
   if(MIDI_CHANNEL && channel != MIDI_CHANNEL) return;
+
+  midiActivity();
 
   //Just ignore notes outside of range (these could be "folded back in")
   if(note < MIDI_NOTE_LOW || note > MIDI_NOTE_HIGH) return;
@@ -319,6 +352,8 @@ void midiNoteOff(byte channel, byte note, byte velocity) {
   #endif
 
   if(MIDI_CHANNEL && channel != MIDI_CHANNEL) return;
+
+  midiActivity();
 
   if(note < MIDI_NOTE_LOW || note > MIDI_NOTE_HIGH) return;
 
@@ -349,6 +384,8 @@ void midiAftertouchChannel(byte channel, byte pressure) {
 
   if(MIDI_CHANNEL && channel != MIDI_CHANNEL) return;
 
+  midiActivity();
+
   #ifdef DEBUG_PRINT
   Serial.print("Chan: ");
   Serial.print(channel);
@@ -358,7 +395,9 @@ void midiAftertouchChannel(byte channel, byte pressure) {
 
   //Aftertouch is only low-resolution.
   cc_msb[AT_SLOT] = pressure;
-  cc_lsb[AT_SLOT] = 0;
+  cc_lsb[AT_SLOT] = pressure;
+
+  sendCC(AT_SLOT);
 
 }
 
@@ -468,4 +507,14 @@ void readSwitches() {
   bend_merge = digitalRead(BEND_SWITCH);
   use_aftertouch = digitalRead(AFTERTOUCH_SWITCH);
   switchesRead = millis();
+}
+
+void updateGlideRate() {
+
+}
+
+void midiActivity() {
+  lastActivity = millis();
+  digitalWrite(LED_PIN, HIGH);
+  ledActive = true;
 }

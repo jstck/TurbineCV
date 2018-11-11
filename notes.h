@@ -2,13 +2,13 @@
 #define __NOTES_H_
 
 
-//Size of buffer of notes. This needs to be a power of 2, less than 256
-#define NOTE_BUFFER_SIZE 8
+//Size of buffer of notes. This needs to be a power of 2, less than 256. 32 is more than the number of fingers on four typical hands.
+#define NOTE_BUFFER_SIZE 32
 
 //Value representing no note
 #define NO_NOTE -1
 
-//Initialize me please
+//Initialize me before using please
 void note_init();
 
 //Note on message, returns what note to play
