@@ -103,34 +103,7 @@ unsigned long switchesRead;
 unsigned long lastActivity;
 bool ledActive = false;
 
-//Portamento/glide settings and state
-
-//Portamento update rate in milliseconds
-#define PORTA_INTERVAL 5
-
-//Constant factor for proportional amount. Decrease this if interval increases
-SQ15x16 porta_prop_k = 400.0;
-
-int porta_scaler = 512; //Init to half value, used if pin is not defined
-int8_t porta_direction; //Portamento direction (+1 for up, -1 for down)
-int8_t porta_cc = 0;
-
-SQ15x16 porta_cc_factor = 0.0; //Factor based on CC value (CC^1.5)
-SQ15x16 porta_scaler_factor = 22.6; //Factor based on scaler port (sqrt(analog value)), init to approx sqrt(512)
-
-SQ15x16 porta_linear_amount = 0.02; //Linear glide amount per tick
-
-SQ15x16 porta_current;
-int porta_target;
-
-
-bool porta_active = false; //PB glide + cc both active
-bool in_portamento = false; //Portamento is happening right now
-
 int current_note_dac;
-
-unsigned long last_porta_update;
-
 
 //Do midi with default settings.
 //MIDI_CREATE_INSTANCE(HardwareSerial, Serial1, MIDI);
@@ -235,11 +208,6 @@ void loop() {
   //Then millisecond-level ones
   now = millis();
 
-  if(in_portamento && now >= last_porta_update + PORTA_INTERVAL) {
-    updatePortamento();
-    return;
-  }
-
   //These are nice if they're donein a timely fashion, but can really wait.
   if(ledActive && now >= lastActivity + MIDI_ACT_TIME) {
     digitalWrite(LED_PIN, LOW);
@@ -275,17 +243,6 @@ void midiChangeControl(byte channel, byte number, byte value) {
 
       //Ignore this value if it is a value to be overridden by aftertouch
       if(use_aftertouch && i == AT_SLOT) return;
-
-      //Check if this is a glide/portamento update.
-      //The dedicated portamento CV output is dealt with as a regular hi-res CC, but the glide merge function
-      //only looks at 7-bit CC for simplicity.
-      if(i == PORTAMENTO_SLOT && glide_merge) {
-        porta_active = (value > 0); //THIS IS PORTAAAA!
-        if(value != porta_cc) {
-          porta_cc = value;
-          update_porta_proportional();
-        }
-      }
 
       //Read MSB ("low-res" part)
       if(value != cc_msb[i]) {
@@ -397,11 +354,6 @@ void midiNoteOn(byte channel, byte note, byte velocity) {
   //Just ignore notes outside of range (these could be "folded back in", but we just ignore them)
   if(note < MIDI_NOTE_LOW || note > MIDI_NOTE_HIGH) return;
 
-  //Is portamento happening as a result of this?
-  if(current_note != NO_NOTE && porta_active) {
-    in_portamento = true;
-  }
-
   current_note = note_on(note);
   if(current_note != NO_NOTE) last_note = current_note;
   
@@ -440,8 +392,6 @@ void midiNoteOff(byte channel, byte note, byte velocity) {
   if(new_note == NO_NOTE) {
     digitalWrite(GATE_PIN, LOW);
     current_note = NO_NOTE;
-    in_portamento = false;
-
   } else {
     current_note = new_note;
     last_note = current_note;
@@ -486,10 +436,6 @@ void play_note(bool new_note) {
 
   //Send note V/oct
   uint16_t note_dac_value = cvtable[current_note-MIDI_NOTE_LOW];
-
-  if(in_portamento) {
-    //???
-  }
 
   //Recalculate amount of pitch bend offset if changing note
   if(new_note) updateBendOffset();
@@ -570,68 +516,9 @@ void readSwitches() {
   bend_merge = digitalRead(BEND_SWITCH);
   use_aftertouch = digitalRead(AFTERTOUCH_SWITCH);
 
-  //If porta scaler pot changes value, do some of the math here
-#ifdef PORTA_SCALER_PIN
-  int ps_new = analogRead(PORTA_SCALER_PIN);
-  if(ps_new != porta_scaler) {
-    porta_scaler = ps_new;
-    porta_scaler_factor = sqrt(porta_scaler);
-    update_porta_proportional();
-  }
-
-  porta_scaler_factor = sqrt(porta_scaler);
-#endif
-
   switchesRead = millis();
 }
 
-
-
-/*
-  Portamento math:
-  A simple exponential curve is done by periodically updating the note dac value
-
-  new value = current value + A * (target value - current value) + B * direction
-
-  this step (new value - current value) is basically the differential in an ordinary first-order differential
-  equation. 
-
-  The linear term (B*direction, where direction is +/- 1) is there to make sure we reach the target value in
-  reasonable (non-infinite) time.
-
-*/
-
-//The proportional factor of the portamento calculation only changes when cc or scaler pot changes value and is only
-//recalculated when needed
-void update_porta_proportional() {
-  porta_proportional = porta_prop_k / (porta_cc_factor * porta_scaler_factor);
-}
-
-//Calculate portamento step
-float porta_step() {
-  return porta_current + (porta_target - porta_current) * porta_proportional + porta_linear_amount * porta_direction;
-}
-
-void updatePortamento() {
-
-  SQ15x16 step = porta_step();
-
-  SQ15x16 new_porta_dac = porta_current + step;
-  int new_dac = roundFixed(new_porta_dac);
-
-  //Check for overshoot or having reached target
-  if( (porta_direction > 0 && new_dac >= porta_target) || (porta_direction < 0 && new_dac <= porta_target) ) {
-    new_dac = porta_target;
-    in_portamento = false;
-  }
-
-  if(new_dac != current_note_dac) {
-    sendDac(NOTE_SLOT, new_dac);
-    current_note_dac = new_dac;
-  }
-
-  last_porta_update = millis();
-}
 
 void midiActivity() {
   lastActivity = millis();
