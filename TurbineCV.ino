@@ -6,6 +6,10 @@
 #include "notes.h"
 #include "cvtable.h"
 
+//Define hardware type for pin assignments
+#define EMI_TEENSY_LC
+#include "hardware.h"
+
 //The MIDI channel to listen on. Set to 0 for "all channels"
 #define MIDI_CHANNEL 0
 
@@ -57,17 +61,6 @@ uint8_t cc_hires[DAC_CHANNELS] = {
   UNUSED_CC,
 };
 
-//Digital output pins for gate and trigger
-#define TRIG_PIN 5
-#define GATE_PIN 6
-
-//Digital output pin for activity LED
-#define LED_PIN 10
-
-//Input pins for switches
-#define GLIDE_SWITCH          7 //SW2
-#define BEND_SWITCH           8 //SW3
-#define AFTERTOUCH_SWITCH     9 //SW4
 
 //Input pin for portamento amount. Comment out if unused
 //#define PORTA_SCALER_PIN A0
@@ -82,7 +75,7 @@ uint8_t cc_hires[DAC_CHANNELS] = {
 #define SWITCH_READ_INTERVAL 500
 
 //Chip select pins for SPI bus to DACs. The board default pins are used for MOSI and SCK.
-uint8_t cs_pins[DAC_CHANNELS/2] = {2, 3, 4};
+uint8_t cs_pins[DAC_CHANNELS/2] = {CS_DAC1, CS_DAC2, CS_DAC3};
 
 //Flags to set high=1 (0-4V) or low=0 gain (0-2V) per DAC.
 uint8_t dac_gain[DAC_CHANNELS] = {1, 0, 0, 0, 0, 0};
@@ -374,14 +367,14 @@ void updateBendOffset() {
     uint16_t upper_note_dac = cvtable[min(last_note + PITCH_BEND_RANGE, MIDI_NOTE_HIGH)-MIDI_NOTE_LOW];
 
     //Interpolate position of pitch bend
-    pitch_bend_offset = (long)pitch_bend * (upper_note_dac - note_dac_value) / 8192;
+    pitch_bend_offset = (long)pitch_bend * (upper_note_dac - current_note_dac) / 8192;
 
 
   } else { //pitch bend down
     uint16_t lower_note_dac = cvtable[max(last_note - PITCH_BEND_RANGE, MIDI_NOTE_LOW)-MIDI_NOTE_LOW];
 
     //Interpolate position of pitch bend
-    pitch_bend_offset = (long)pitch_bend * (note_dac_value-lower_note_dac) / 8192;
+    pitch_bend_offset = (long)pitch_bend * (current_note_dac-lower_note_dac) / 8192;
   }
 }
 
